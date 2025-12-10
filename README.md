@@ -4,87 +4,65 @@ This project demonstrates how to implement a minimal HTTP client in Go using **r
 
 It manually:
 
-* Opens a TCP connection to a server
-* Constructs and sends an HTTP GET request
-* Reads and parses the HTTP status line
-* Prints custom status messages
-* Prints the full HTTP response
+- Opens a TCP connection to a server  
+- Constructs and sends an HTTP GET request  
+- Reads and parses the HTTP status line  
+- Follows HTTP redirects  
+- Prints custom status messages  
+- Prints the full HTTP response  
 
 ---
 
 ## 🚀 Features
 
-* Connects to any host and port via TCP
-* Sends a custom HTTP GET request
-* Supports custom request headers
-* Parses and interprets HTTP status codes
-* Prints the complete server response
+### ✔ Minimal HTTP Client (No `net/http`)
+The client communicates directly over TCP, giving full visibility into how HTTP works under the hood.
+
+### ✔ Custom Request Headers
+Send any custom header you need.
+
+### ✔ Status Code Parsing
+Friendly messages for:
+
+- `200 OK`
+- `404 Not Found`
+- `500 Internal Server Error`
+- All other codes shown as generic warnings
+
+### ✔ **Redirect Following (New!)**
+The client automatically follows standard HTTP redirect codes:
+
+- `301`, `302`, `303`, `307`, `308`
+
+Redirects are resolved correctly whether they are:
+
+- Absolute URLs  
+- Relative paths  
+
+A redirect limit prevents infinite loops.
+
+### ✔ Full Response Output
+Prints the complete server response, including:
+
+- Status line  
+- Headers  
+- Body  
 
 ---
 
-## 📄 Code Overview
+## 📄 How It Works
 
-The client:
-
-1. Connects to `example.com` on port `80`
-2. Sends a GET request to the root path `/`
-3. Reads the HTTP response line-by-line
-4. Parses the status code to show friendly output:
-
-   * `200 OK`
-   * `404 Not Found`
-   * `500 Internal Server Error`
-   * Any other status code is labeled as "unknown"
+1. Connects to a TCP server (e.g., `example.com:80`)
+2. Builds and sends an HTTP GET request
+3. Reads the HTTP status line
+4. Checks for redirects
+5. If a redirect is found:
+   - Extracts the `Location` header  
+   - Resolves relative URLs  
+   - Repeats the request  
+6. Prints final response body
 
 ---
 
 ## 🧪 Example Output
-
-```
-Status Line: HTTP/1.1 200 OK
-✅ HTTP Status: 200 OK
-
-=== Full Response ===
-HTTP/1.1 200 OK
-Content-Type: text/html; charset=UTF-8
-...
-<html>...</html>
-```
-
----
-
-## 🛠 How to Run
-
-Make sure you have Go installed.
-
-```bash
-go run main.go
-```
-
-The program will:
-
-* Connect to the server
-* Send the HTTP request
-* Print the parsed status and the full response
-
----
-
-## 🧩 Customization
-
-You can modify these variables:
-
-```go
-host := "example.com"
-port := "80"
-path := "/"
-```
-
-Add or change custom headers:
-
-```go
-headers := map[string]string{
-    "User-Agent": "MyClient/1.0",
-    "Accept": "*/*",
-}
-```
 
