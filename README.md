@@ -1,68 +1,74 @@
-# Simple Go TCP HTTP Client
+# Simple Go TCP HTTP Client (with Redirect Support)
 
-This project demonstrates how to implement a minimal HTTP client in Go using **raw TCP sockets**, without relying on the built-in `net/http` package.
-
-It manually:
-
-- Opens a TCP connection to a server  
-- Constructs and sends an HTTP GET request  
-- Reads and parses the HTTP status line  
-- Follows HTTP redirects  
-- Prints custom status messages  
-- Prints the full HTTP response  
+This project demonstrates how to build a **minimal HTTP client in Go using raw TCP sockets**, without relying on Go’s built-in `net/http` package.  
+It now includes **support for following HTTP redirects**, making it a more realistic low-level HTTP implementation.
 
 ---
 
 ## 🚀 Features
 
-### ✔ Minimal HTTP Client (No `net/http`)
-The client communicates directly over TCP, giving full visibility into how HTTP works under the hood.
+### Manual TCP-Level HTTP Handling
+The client:
+- Opens a raw TCP connection  
+- Sends a manually constructed HTTP GET request  
+- Parses the HTTP status line  
+- Reads all response headers  
+- Reads and returns the HTTP body  
 
-### ✔ Custom Request Headers
-Send any custom header you need.
-
-### ✔ Status Code Parsing
-Friendly messages for:
-
-- `200 OK`
-- `404 Not Found`
-- `500 Internal Server Error`
-- All other codes shown as generic warnings
-
-### ✔ **Redirect Following (New!)**
-The client automatically follows standard HTTP redirect codes:
-
-- `301`, `302`, `303`, `307`, `308`
-
-Redirects are resolved correctly whether they are:
-
-- Absolute URLs  
-- Relative paths  
-
-A redirect limit prevents infinite loops.
-
-### ✔ Full Response Output
-Prints the complete server response, including:
-
-- Status line  
-- Headers  
-- Body  
+This allows you to interact with servers exactly as HTTP works at the protocol level.
 
 ---
 
-## 📄 How It Works
+## 🔁 Redirect Support
 
-1. Connects to a TCP server (e.g., `example.com:80`)
-2. Builds and sends an HTTP GET request
-3. Reads the HTTP status line
-4. Checks for redirects
-5. If a redirect is found:
-   - Extracts the `Location` header  
-   - Resolves relative URLs  
-   - Repeats the request  
-6. Prints final response body
+The function `fetchWithRedirects()` introduces:
+- Detection of 3xx redirect responses  
+- Extraction of the `Location` header  
+- Support for absolute and relative redirect URLs  
+- Automatic redirect following up to a configurable limit  
+- Logging of each redirect hop  
+
+`resolveURL()` ensures relative paths are resolved correctly against the current URL.
 
 ---
 
-## 🧪 Example Output
+## 📁 Code Structure
 
+### `makeRequest()`
+Handles a single HTTP request over TCP:
+- Opens socket connection  
+- Sends GET request  
+- Parses status code, headers, body  
+- Returns redirect location (if any)
+
+### `fetchWithRedirects()`
+Controls redirect flow:
+- Sends initial request  
+- Follows redirects until receiving a non-redirect response or exceeding a limit  
+
+### `resolveURL()`
+Resolves relative or absolute redirect targets into a full URL.
+
+---
+
+## ⚙️ Customization
+
+You can modify:
+- `startURL` — to test any HTTP endpoint  
+- `maxRedirects` — maximum number of redirect hops  
+- HTTP headers — by editing the GET request construction  
+
+---
+
+## 📌 Notes
+
+- This version supports only **plaintext HTTP (port 80)**.  
+- HTTPS requires TLS and is not included in this minimal example.  
+- Intended for educational or debugging use rather than production environments.
+
+---
+
+## 🧑‍💻 Running
+
+```bash
+go run main.go
