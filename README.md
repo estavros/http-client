@@ -63,8 +63,7 @@ You can modify:
 ## 📌 Notes
 
 - This version supports only **plaintext HTTP (port 80)**.  
-- HTTPS requires TLS and is not included in this minimal example.  
-- Intended for educational or debugging use rather than production environments.
+- HTTPS requires TLS and is not included in this minimal example. 
 
 ---
 
