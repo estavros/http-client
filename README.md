@@ -56,7 +56,20 @@ Resolves relative or absolute redirect targets into a full URL.
 You can modify:
 - `startURL` — to test any HTTP endpoint  
 - `maxRedirects` — maximum number of redirect hops  
-- HTTP headers — by editing the GET request construction  
+- HTTP headers — by editing the GET request construction
+
+---
+
+## 🛠️ Custom Headers
+
+This client supports **custom HTTP headers**. You can add headers by modifying the `customHeaders` map in `main.go`. For example:
+
+```go
+customHeaders := map[string]string{
+    "User-Agent":      "MyCustomClient/1.0",
+    "X-Custom-Header": "MyValue",
+}
+
 
 ---
 
