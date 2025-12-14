@@ -13,7 +13,13 @@ func main() {
 	startURL := "http://example.com/"
 	maxRedirects := 5
 
-	finalResp, err := fetchWithRedirects(startURL, maxRedirects)
+	// Example custom headers
+	customHeaders := map[string]string{
+		"X-Custom-Header": "MyValue",
+		"User-Agent":      "MyCustomClient/1.0",
+	}
+
+	finalResp, err := fetchWithRedirects(startURL, maxRedirects, customHeaders)
 	if err != nil {
 		panic(err)
 	}
@@ -26,13 +32,13 @@ func main() {
 // Fetch + Redirect Support
 // ------------------------
 
-func fetchWithRedirects(rawURL string, maxRedirects int) (string, error) {
+func fetchWithRedirects(rawURL string, maxRedirects int, headers map[string]string) (string, error) {
 	currentURL := rawURL
 
 	for i := 0; i <= maxRedirects; i++ {
 		fmt.Println("➡ Requesting:", currentURL)
 
-		statusCode, headers, body, location, err := makeRequest(currentURL)
+		statusCode, respHeaders, body, location, err := makeRequest(currentURL, headers)
 		if err != nil {
 			return "", err
 		}
@@ -66,7 +72,7 @@ func fetchWithRedirects(rawURL string, maxRedirects int) (string, error) {
 // Single HTTP request
 // ------------------------
 
-func makeRequest(rawURL string) (int, map[string]string, string, string, error) {
+func makeRequest(rawURL string, customHeaders map[string]string) (int, map[string]string, string, string, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return 0, nil, "", "", err
@@ -84,10 +90,19 @@ func makeRequest(rawURL string) (int, map[string]string, string, string, error) 
 	defer conn.Close()
 
 	// Build GET request
-	req := fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: MyClient/1.0\r\nConnection: close\r\n\r\n",
-		u.RequestURI(), u.Host)
+	reqBuilder := strings.Builder{}
+	reqBuilder.WriteString(fmt.Sprintf("GET %s HTTP/1.1\r\n", u.RequestURI()))
+	reqBuilder.WriteString(fmt.Sprintf("Host: %s\r\n", u.Host))
+	reqBuilder.WriteString("Connection: close\r\n")
 
-	_, err = conn.Write([]byte(req))
+	// Add custom headers
+	for k, v := range customHeaders {
+		reqBuilder.WriteString(fmt.Sprintf("%s: %s\r\n", k, v))
+	}
+
+	reqBuilder.WriteString("\r\n")
+
+	_, err = conn.Write([]byte(reqBuilder.String()))
 	if err != nil {
 		return 0, nil, "", "", err
 	}
