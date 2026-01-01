@@ -1,4 +1,4 @@
-# Simple Go TCP HTTP Client (with Redirect Support)
+# Simple Go TCP HTTP Client
 
 This project demonstrates how to build a **minimal HTTP/HTTPS client in Go using raw TCP/TLS sockets**, without relying on Go’s built-in `net/http` package.  
 It now includes **support for following HTTP redirects**, making it a more realistic low-level HTTP implementation.
