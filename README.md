@@ -1,6 +1,6 @@
 # Simple Go TCP HTTP Client (with Redirect Support)
 
-This project demonstrates how to build a **minimal HTTP client in Go using raw TCP sockets**, without relying on Go’s built-in `net/http` package.  
+This project demonstrates how to build a **minimal HTTP/HTTPS client in Go using raw TCP/TLS sockets**, without relying on Go’s built-in `net/http` package.  
 It now includes **support for following HTTP redirects**, making it a more realistic low-level HTTP implementation.
 
 ---
@@ -57,6 +57,7 @@ You can modify:
 - `startURL` — to test any HTTP endpoint  
 - `maxRedirects` — maximum number of redirect hops  
 - HTTP headers — by editing the GET request construction
+- `startURL` — can be either HTTP or HTTPS. The client will automatically select the correct port and connection method.
 
 ---
 
@@ -76,8 +77,17 @@ customHeaders := map[string]string{
 
 ## 📌 Notes
 
-- This version supports only **plaintext HTTP (port 80)**.  
-- HTTPS requires TLS and is not included in this minimal example. 
+- This client supports both **HTTP and HTTPS**. HTTPS requests are handled using TLS on port 443. 
+
+---
+
+## ⚠️ Limitations
+
+- Only GET requests are supported.  
+- Compressed responses (gzip/deflate) are not automatically decoded.  
+- Cookies and sessions are not managed automatically.  
+- HTTP/2 is not supported (only HTTP/1.1).  
+- No proxy support.
 
 ---
 
