@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/url"
@@ -10,7 +11,7 @@ import (
 )
 
 func main() {
-	startURL := "http://example.com/"
+	startURL := "https://example.com/" // changed to HTTPS for demo
 	maxRedirects := 5
 
 	// Example custom headers
@@ -69,7 +70,7 @@ func fetchWithRedirects(rawURL string, maxRedirects int, headers map[string]stri
 }
 
 // ------------------------
-// Single HTTP request
+// Single HTTP/HTTPS request
 // ------------------------
 
 func makeRequest(rawURL string, customHeaders map[string]string) (int, map[string]string, string, string, error) {
@@ -80,10 +81,22 @@ func makeRequest(rawURL string, customHeaders map[string]string) (int, map[strin
 
 	port := u.Port()
 	if port == "" {
-		port = "80"
+		if u.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
 	}
 
-	conn, err := net.Dial("tcp", u.Host+":"+port)
+	// Establish connection based on scheme
+	var conn net.Conn
+	if u.Scheme == "https" {
+		conn, err = tls.Dial("tcp", u.Host+":"+port, &tls.Config{
+			ServerName: u.Host,
+		})
+	} else {
+		conn, err = net.Dial("tcp", u.Host+":"+port)
+	}
 	if err != nil {
 		return 0, nil, "", "", err
 	}
