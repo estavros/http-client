@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"compress/gzip"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"strconv"
@@ -11,13 +13,13 @@ import (
 )
 
 func main() {
-	startURL := "https://example.com/" // changed to HTTPS for demo
+	startURL := "https://example.com/"
 	maxRedirects := 5
 
 	// Example custom headers
 	customHeaders := map[string]string{
 		"X-Custom-Header": "MyValue",
-		"User-Agent":      "MyCustomClient/1.0",
+		"User-Agent":     "MyCustomClient/1.0",
 	}
 
 	finalResp, err := fetchWithRedirects(startURL, maxRedirects, customHeaders)
@@ -50,20 +52,20 @@ func fetchWithRedirects(rawURL string, maxRedirects int, headers map[string]stri
 			return body, nil
 		}
 
-		// Redirect must have a Location header
 		if location == "" {
 			return "", fmt.Errorf("redirect (%d) but no Location header", statusCode)
 		}
 
 		fmt.Printf("↪ Redirect %d (%d): %s\n", i+1, statusCode, location)
 
-		// Resolve relative redirects
 		nextURL, err := resolveURL(currentURL, location)
 		if err != nil {
 			return "", err
 		}
 
 		currentURL = nextURL
+
+		_ = respHeaders // reserved for later features
 	}
 
 	return "", fmt.Errorf("too many redirects (limit %d)", maxRedirects)
@@ -88,7 +90,7 @@ func makeRequest(rawURL string, customHeaders map[string]string) (int, map[strin
 		}
 	}
 
-	// Establish connection based on scheme
+	// Connect
 	var conn net.Conn
 	if u.Scheme == "https" {
 		conn, err = tls.Dial("tcp", u.Host+":"+port, &tls.Config{
@@ -102,27 +104,25 @@ func makeRequest(rawURL string, customHeaders map[string]string) (int, map[strin
 	}
 	defer conn.Close()
 
-	// Build GET request
-	reqBuilder := strings.Builder{}
-	reqBuilder.WriteString(fmt.Sprintf("GET %s HTTP/1.1\r\n", u.RequestURI()))
-	reqBuilder.WriteString(fmt.Sprintf("Host: %s\r\n", u.Host))
-	reqBuilder.WriteString("Connection: close\r\n")
+	// Build request
+	req := strings.Builder{}
+	req.WriteString(fmt.Sprintf("GET %s HTTP/1.1\r\n", u.RequestURI()))
+	req.WriteString(fmt.Sprintf("Host: %s\r\n", u.Host))
+	req.WriteString("Connection: close\r\n")
+	req.WriteString("Accept-Encoding: gzip\r\n")
 
-	// Add custom headers
 	for k, v := range customHeaders {
-		reqBuilder.WriteString(fmt.Sprintf("%s: %s\r\n", k, v))
+		req.WriteString(fmt.Sprintf("%s: %s\r\n", k, v))
 	}
+	req.WriteString("\r\n")
 
-	reqBuilder.WriteString("\r\n")
-
-	_, err = conn.Write([]byte(reqBuilder.String()))
-	if err != nil {
+	if _, err := conn.Write([]byte(req.String())); err != nil {
 		return 0, nil, "", "", err
 	}
 
 	reader := bufio.NewReader(conn)
 
-	// Read status line
+	// Status line
 	statusLine, _ := reader.ReadString('\n')
 	parts := strings.SplitN(statusLine, " ", 3)
 	statusCode := 0
@@ -130,9 +130,10 @@ func makeRequest(rawURL string, customHeaders map[string]string) (int, map[strin
 		statusCode, _ = strconv.Atoi(parts[1])
 	}
 
-	// Read headers
+	// Headers
 	headers := make(map[string]string)
 	var location string
+	var isGzip bool
 
 	for {
 		line, _ := reader.ReadString('\n')
@@ -142,31 +143,40 @@ func makeRequest(rawURL string, customHeaders map[string]string) (int, map[strin
 
 		colon := strings.Index(line, ":")
 		if colon > 0 {
-			key := strings.TrimSpace(line[:colon])
+			key := strings.ToLower(strings.TrimSpace(line[:colon]))
 			value := strings.TrimSpace(line[colon+1:])
-			headers[strings.ToLower(key)] = value
+			headers[key] = value
 
-			if strings.ToLower(key) == "location" {
+			if key == "location" {
 				location = value
+			}
+			if key == "content-encoding" && strings.Contains(value, "gzip") {
+				isGzip = true
 			}
 		}
 	}
 
-	// Read body
-	var bodyBuilder strings.Builder
-	for {
-		line, err := reader.ReadString('\n')
+	// Body reader (decompress if needed)
+	var bodyReader io.Reader = reader
+	if isGzip {
+		gz, err := gzip.NewReader(reader)
 		if err != nil {
-			break
+			return 0, nil, "", "", err
 		}
-		bodyBuilder.WriteString(line)
+		defer gz.Close()
+		bodyReader = gz
 	}
 
-	return statusCode, headers, bodyBuilder.String(), location, nil
+	bodyBytes, err := io.ReadAll(bodyReader)
+	if err != nil {
+		return 0, nil, "", "", err
+	}
+
+	return statusCode, headers, string(bodyBytes), location, nil
 }
 
 // ------------------------
-// URL Resolution (relative/absolute)
+// URL Resolution
 // ------------------------
 
 func resolveURL(current, next string) (string, error) {
