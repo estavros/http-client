@@ -84,7 +84,6 @@ customHeaders := map[string]string{
 ## ⚠️ Limitations
 
 - Only GET requests are supported.  
-- Compressed responses (gzip/deflate) are not automatically decoded.  
 - Cookies and sessions are not managed automatically.  
 - HTTP/2 is not supported (only HTTP/1.1).  
 - No proxy support.
