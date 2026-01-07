@@ -32,6 +32,17 @@ The function `fetchWithRedirects()` introduces:
 
 ---
 
+## ⏱️ Timeouts
+
+To prevent the client from hanging indefinitely on slow or unresponsive servers, the client includes:
+
+- **Connection timeout**: 10 seconds
+- **Read/Write timeout**: 15 seconds
+
+This ensures requests fail fast on network issues and allows safe retries or concurrent requests.
+
+---
+
 ## 📁 Code Structure
 
 ### `makeRequest()`
