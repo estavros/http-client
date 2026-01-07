@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -19,7 +20,7 @@ func main() {
 	// Example custom headers
 	customHeaders := map[string]string{
 		"X-Custom-Header": "MyValue",
-		"User-Agent":     "MyCustomClient/1.0",
+		"User-Agent":      "MyCustomClient/1.0",
 	}
 
 	finalResp, err := fetchWithRedirects(startURL, maxRedirects, customHeaders)
@@ -72,7 +73,7 @@ func fetchWithRedirects(rawURL string, maxRedirects int, headers map[string]stri
 }
 
 // ------------------------
-// Single HTTP/HTTPS request
+// Single HTTP/HTTPS request with timeouts
 // ------------------------
 
 func makeRequest(rawURL string, customHeaders map[string]string) (int, map[string]string, string, string, error) {
@@ -90,19 +91,27 @@ func makeRequest(rawURL string, customHeaders map[string]string) (int, map[strin
 		}
 	}
 
+	// Dialer with connection timeout
+	dialer := net.Dialer{
+		Timeout: 10 * time.Second,
+	}
+
 	// Connect
 	var conn net.Conn
 	if u.Scheme == "https" {
-		conn, err = tls.Dial("tcp", u.Host+":"+port, &tls.Config{
+		conn, err = tls.DialWithDialer(&dialer, "tcp", u.Host+":"+port, &tls.Config{
 			ServerName: u.Host,
 		})
 	} else {
-		conn, err = net.Dial("tcp", u.Host+":"+port)
+		conn, err = dialer.Dial("tcp", u.Host+":"+port)
 	}
 	if err != nil {
 		return 0, nil, "", "", err
 	}
 	defer conn.Close()
+
+	// Set read/write deadline
+	conn.SetDeadline(time.Now().Add(15 * time.Second))
 
 	// Build request
 	req := strings.Builder{}
@@ -123,7 +132,10 @@ func makeRequest(rawURL string, customHeaders map[string]string) (int, map[strin
 	reader := bufio.NewReader(conn)
 
 	// Status line
-	statusLine, _ := reader.ReadString('\n')
+	statusLine, err := reader.ReadString('\n')
+	if err != nil {
+		return 0, nil, "", "", err
+	}
 	parts := strings.SplitN(statusLine, " ", 3)
 	statusCode := 0
 	if len(parts) >= 2 {
@@ -136,7 +148,10 @@ func makeRequest(rawURL string, customHeaders map[string]string) (int, map[strin
 	var isGzip bool
 
 	for {
-		line, _ := reader.ReadString('\n')
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return 0, nil, "", "", err
+		}
 		if line == "\r\n" {
 			break
 		}
