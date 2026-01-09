@@ -9,39 +9,27 @@ It now includes **support for following HTTP redirects**, making it a more reali
 
 ### Manual TCP-Level HTTP Handling
 The client:
-- Opens a raw TCP connection  
-- Sends a manually constructed HTTP GET request  
-- Parses the HTTP status line  
-- Reads all response headers  
-- Reads and returns the HTTP body  
+- Opens a raw TCP connection
+- Sends a manually constructed HTTP GET request
+- Parses the HTTP status line
+- Reads all response headers
+- Reads and returns the HTTP body
 
-This allows you to interact with servers exactly as HTTP works at the protocol level.
+### Redirect Handling
+- Detects HTTP 3xx responses
+- Extracts and resolves `Location` headers
+- Supports absolute and relative redirects
+- Follows redirects up to a configurable limit
+- Logs each redirect hop
 
----
-
-## 🔁 Redirect Support
-
-The function `fetchWithRedirects()` introduces:
-- Detection of 3xx redirect responses  
-- Extraction of the `Location` header  
-- Support for absolute and relative redirect URLs  
-- Automatic redirect following up to a configurable limit  
-- Logging of each redirect hop  
-
-`resolveURL()` ensures relative paths are resolved correctly against the current URL.
-
----
-
-## ⏱️ Timeouts
-
-To prevent the client from hanging indefinitely on slow or unresponsive servers, the client includes:
-
-- **Connection timeout**: 10 seconds
-- **Read/Write timeout**: 15 seconds
-
-This ensures requests fail fast on network issues and allows safe retries or concurrent requests.
-
----
+### Smart HTTP Caching (ETag / Last-Modified)
+- In-memory response caching keyed by full URL
+- Automatically sends:
+  - `If-None-Match` (ETag)
+  - `If-Modified-Since` (Last-Modified)
+- Correctly handles `304 Not Modified`
+- Reuses cached response bodies transparently
+- Mimics real browser cache revalidation behavior
 
 ## 📁 Code Structure
 
@@ -59,6 +47,22 @@ Controls redirect flow:
 
 ### `resolveURL()`
 Resolves relative or absolute redirect targets into a full URL.
+
+---
+
+## 📦 Cache Behavior
+
+When a URL has been requested before, the client:
+
+1. Stores the response body along with `ETag` and `Last-Modified` headers
+2. Sends conditional headers on subsequent requests
+3. If the server replies with `304 Not Modified`:
+   - No response body is downloaded
+   - The cached body is reused
+4. If the resource has changed:
+   - The cache entry is updated automatically
+
+This dramatically reduces bandwidth usage and improves performance while remaining fully HTTP-compliant.
 
 ---
 
