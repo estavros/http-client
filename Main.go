@@ -13,14 +13,22 @@ import (
 	"time"
 )
 
+type CacheEntry struct {
+	Body         string
+	ETag         string
+	LastModified string
+	Headers      map[string]string
+}
+
+var httpCache = map[string]*CacheEntry{}
+
 func main() {
 	startURL := "https://example.com/"
 	maxRedirects := 5
 
-	// Example custom headers
 	customHeaders := map[string]string{
 		"X-Custom-Header": "MyValue",
-		"User-Agent":      "MyCustomClient/1.0",
+		"User-Agent":     "MyCustomClient/1.0",
 	}
 
 	finalResp, err := fetchWithRedirects(startURL, maxRedirects, customHeaders)
@@ -47,9 +55,14 @@ func fetchWithRedirects(rawURL string, maxRedirects int, headers map[string]stri
 			return "", err
 		}
 
-		// If not a redirect, return
+		// 304 → return cached body
+		if statusCode == 304 {
+			fmt.Println("📦 Using cached response")
+			return httpCache[currentURL].Body, nil
+		}
+
+		// If not redirect → return body
 		if statusCode < 300 || statusCode > 399 {
-			fmt.Println("No redirect, returning response.")
 			return body, nil
 		}
 
@@ -57,23 +70,20 @@ func fetchWithRedirects(rawURL string, maxRedirects int, headers map[string]stri
 			return "", fmt.Errorf("redirect (%d) but no Location header", statusCode)
 		}
 
-		fmt.Printf("↪ Redirect %d (%d): %s\n", i+1, statusCode, location)
-
 		nextURL, err := resolveURL(currentURL, location)
 		if err != nil {
 			return "", err
 		}
-
 		currentURL = nextURL
 
-		_ = respHeaders // reserved for later features
+		_ = respHeaders
 	}
 
-	return "", fmt.Errorf("too many redirects (limit %d)", maxRedirects)
+	return "", fmt.Errorf("too many redirects")
 }
 
 // ------------------------
-// Single HTTP/HTTPS request with timeouts
+// HTTP Request with cache revalidation
 // ------------------------
 
 func makeRequest(rawURL string, customHeaders map[string]string) (int, map[string]string, string, string, error) {
@@ -91,17 +101,11 @@ func makeRequest(rawURL string, customHeaders map[string]string) (int, map[strin
 		}
 	}
 
-	// Dialer with connection timeout
-	dialer := net.Dialer{
-		Timeout: 10 * time.Second,
-	}
+	dialer := net.Dialer{Timeout: 10 * time.Second}
 
-	// Connect
 	var conn net.Conn
 	if u.Scheme == "https" {
-		conn, err = tls.DialWithDialer(&dialer, "tcp", u.Host+":"+port, &tls.Config{
-			ServerName: u.Host,
-		})
+		conn, err = tls.DialWithDialer(&dialer, "tcp", u.Host+":"+port, &tls.Config{ServerName: u.Host})
 	} else {
 		conn, err = dialer.Dial("tcp", u.Host+":"+port)
 	}
@@ -110,15 +114,23 @@ func makeRequest(rawURL string, customHeaders map[string]string) (int, map[strin
 	}
 	defer conn.Close()
 
-	// Set read/write deadline
 	conn.SetDeadline(time.Now().Add(15 * time.Second))
 
-	// Build request
 	req := strings.Builder{}
 	req.WriteString(fmt.Sprintf("GET %s HTTP/1.1\r\n", u.RequestURI()))
 	req.WriteString(fmt.Sprintf("Host: %s\r\n", u.Host))
 	req.WriteString("Connection: close\r\n")
 	req.WriteString("Accept-Encoding: gzip\r\n")
+
+	// Attach cache validators
+	if c, ok := httpCache[rawURL]; ok {
+		if c.ETag != "" {
+			req.WriteString("If-None-Match: " + c.ETag + "\r\n")
+		}
+		if c.LastModified != "" {
+			req.WriteString("If-Modified-Since: " + c.LastModified + "\r\n")
+		}
+	}
 
 	for k, v := range customHeaders {
 		req.WriteString(fmt.Sprintf("%s: %s\r\n", k, v))
@@ -131,77 +143,68 @@ func makeRequest(rawURL string, customHeaders map[string]string) (int, map[strin
 
 	reader := bufio.NewReader(conn)
 
-	// Status line
-	statusLine, err := reader.ReadString('\n')
-	if err != nil {
-		return 0, nil, "", "", err
-	}
-	parts := strings.SplitN(statusLine, " ", 3)
-	statusCode := 0
-	if len(parts) >= 2 {
-		statusCode, _ = strconv.Atoi(parts[1])
-	}
+	statusLine, _ := reader.ReadString('\n')
+	parts := strings.Split(statusLine, " ")
+	statusCode, _ := strconv.Atoi(parts[1])
 
-	// Headers
-	headers := make(map[string]string)
-	var location string
+	headers := map[string]string{}
+	var location, etag, lastModified string
 	var isGzip bool
 
 	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return 0, nil, "", "", err
-		}
+		line, _ := reader.ReadString('\n')
 		if line == "\r\n" {
 			break
 		}
-
 		colon := strings.Index(line, ":")
-		if colon > 0 {
-			key := strings.ToLower(strings.TrimSpace(line[:colon]))
-			value := strings.TrimSpace(line[colon+1:])
-			headers[key] = value
+		key := strings.ToLower(strings.TrimSpace(line[:colon]))
+		val := strings.TrimSpace(line[colon+1:])
+		headers[key] = val
 
-			if key == "location" {
-				location = value
-			}
-			if key == "content-encoding" && strings.Contains(value, "gzip") {
-				isGzip = true
-			}
+		if key == "location" {
+			location = val
+		}
+		if key == "etag" {
+			etag = val
+		}
+		if key == "last-modified" {
+			lastModified = val
+		}
+		if key == "content-encoding" && strings.Contains(val, "gzip") {
+			isGzip = true
 		}
 	}
 
-	// Body reader (decompress if needed)
+	// 304 → keep cache
+	if statusCode == 304 {
+		return statusCode, headers, "", "", nil
+	}
+
 	var bodyReader io.Reader = reader
 	if isGzip {
-		gz, err := gzip.NewReader(reader)
-		if err != nil {
-			return 0, nil, "", "", err
-		}
+		gz, _ := gzip.NewReader(reader)
 		defer gz.Close()
 		bodyReader = gz
 	}
 
-	bodyBytes, err := io.ReadAll(bodyReader)
-	if err != nil {
-		return 0, nil, "", "", err
+	bodyBytes, _ := io.ReadAll(bodyReader)
+	body := string(bodyBytes)
+
+	// Store in cache
+	httpCache[rawURL] = &CacheEntry{
+		Body:         body,
+		ETag:         etag,
+		LastModified: lastModified,
+		Headers:      headers,
 	}
 
-	return statusCode, headers, string(bodyBytes), location, nil
+	return statusCode, headers, body, location, nil
 }
 
 // ------------------------
-// URL Resolution
-// ------------------------
 
 func resolveURL(current, next string) (string, error) {
-	base, err := url.Parse(current)
-	if err != nil {
-		return "", err
-	}
-	ref, err := url.Parse(next)
-	if err != nil {
-		return "", err
-	}
+	base, _ := url.Parse(current)
+	ref, _ := url.Parse(next)
 	return base.ResolveReference(ref).String(), nil
 }
