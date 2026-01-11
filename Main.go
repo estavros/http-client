@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,6 +22,63 @@ type CacheEntry struct {
 }
 
 var httpCache = map[string]*CacheEntry{}
+
+// =========================
+// 🔥 Connection Pool
+// =========================
+
+type pooledConn struct {
+	conn     net.Conn
+	lastUsed time.Time
+}
+
+var connPool = struct {
+	sync.Mutex
+	conns map[string][]*pooledConn
+}{
+	conns: make(map[string][]*pooledConn),
+}
+
+func getConn(host, scheme string) (net.Conn, error) {
+	key := scheme + "://" + host
+
+	connPool.Lock()
+	list := connPool.conns[key]
+	if len(list) > 0 {
+		pc := list[len(list)-1]
+		connPool.conns[key] = list[:len(list)-1]
+		connPool.Unlock()
+
+		pc.conn.SetDeadline(time.Now().Add(15 * time.Second))
+		return pc.conn, nil
+	}
+	connPool.Unlock()
+
+	// Open new connection
+	dialer := net.Dialer{Timeout: 10 * time.Second}
+	port := "80"
+	if scheme == "https" {
+		port = "443"
+	}
+
+	if scheme == "https" {
+		return tls.DialWithDialer(&dialer, "tcp", host+":"+port, &tls.Config{ServerName: host})
+	}
+	return dialer.Dial("tcp", host+":"+port)
+}
+
+func releaseConn(host, scheme string, conn net.Conn) {
+	key := scheme + "://" + host
+
+	connPool.Lock()
+	connPool.conns[key] = append(connPool.conns[key], &pooledConn{
+		conn:     conn,
+		lastUsed: time.Now(),
+	})
+	connPool.Unlock()
+}
+
+// =========================
 
 func main() {
 	startURL := "https://example.com/"
@@ -50,18 +108,16 @@ func fetchWithRedirects(rawURL string, maxRedirects int, headers map[string]stri
 	for i := 0; i <= maxRedirects; i++ {
 		fmt.Println("➡ Requesting:", currentURL)
 
-		statusCode, respHeaders, body, location, err := makeRequest(currentURL, headers)
+		statusCode, _, body, location, err := makeRequest(currentURL, headers)
 		if err != nil {
 			return "", err
 		}
 
-		// 304 → return cached body
 		if statusCode == 304 {
 			fmt.Println("📦 Using cached response")
 			return httpCache[currentURL].Body, nil
 		}
 
-		// If not redirect → return body
 		if statusCode < 300 || statusCode > 399 {
 			return body, nil
 		}
@@ -70,59 +126,33 @@ func fetchWithRedirects(rawURL string, maxRedirects int, headers map[string]stri
 			return "", fmt.Errorf("redirect (%d) but no Location header", statusCode)
 		}
 
-		nextURL, err := resolveURL(currentURL, location)
-		if err != nil {
-			return "", err
-		}
+		nextURL, _ := resolveURL(currentURL, location)
 		currentURL = nextURL
-
-		_ = respHeaders
 	}
 
 	return "", fmt.Errorf("too many redirects")
 }
 
 // ------------------------
-// HTTP Request with cache revalidation
+// HTTP Request
 // ------------------------
 
 func makeRequest(rawURL string, customHeaders map[string]string) (int, map[string]string, string, string, error) {
-	u, err := url.Parse(rawURL)
+	u, _ := url.Parse(rawURL)
+
+	conn, err := getConn(u.Host, u.Scheme)
 	if err != nil {
 		return 0, nil, "", "", err
 	}
 
-	port := u.Port()
-	if port == "" {
-		if u.Scheme == "https" {
-			port = "443"
-		} else {
-			port = "80"
-		}
-	}
-
-	dialer := net.Dialer{Timeout: 10 * time.Second}
-
-	var conn net.Conn
-	if u.Scheme == "https" {
-		conn, err = tls.DialWithDialer(&dialer, "tcp", u.Host+":"+port, &tls.Config{ServerName: u.Host})
-	} else {
-		conn, err = dialer.Dial("tcp", u.Host+":"+port)
-	}
-	if err != nil {
-		return 0, nil, "", "", err
-	}
-	defer conn.Close()
-
-	conn.SetDeadline(time.Now().Add(15 * time.Second))
+	reader := bufio.NewReader(conn)
 
 	req := strings.Builder{}
 	req.WriteString(fmt.Sprintf("GET %s HTTP/1.1\r\n", u.RequestURI()))
 	req.WriteString(fmt.Sprintf("Host: %s\r\n", u.Host))
-	req.WriteString("Connection: close\r\n")
+	req.WriteString("Connection: keep-alive\r\n")
 	req.WriteString("Accept-Encoding: gzip\r\n")
 
-	// Attach cache validators
 	if c, ok := httpCache[rawURL]; ok {
 		if c.ETag != "" {
 			req.WriteString("If-None-Match: " + c.ETag + "\r\n")
@@ -138,10 +168,9 @@ func makeRequest(rawURL string, customHeaders map[string]string) (int, map[strin
 	req.WriteString("\r\n")
 
 	if _, err := conn.Write([]byte(req.String())); err != nil {
+		conn.Close()
 		return 0, nil, "", "", err
 	}
-
-	reader := bufio.NewReader(conn)
 
 	statusLine, _ := reader.ReadString('\n')
 	parts := strings.Split(statusLine, " ")
@@ -150,6 +179,7 @@ func makeRequest(rawURL string, customHeaders map[string]string) (int, map[strin
 	headers := map[string]string{}
 	var location, etag, lastModified string
 	var isGzip bool
+	var keepAlive = true
 
 	for {
 		line, _ := reader.ReadString('\n')
@@ -173,10 +203,17 @@ func makeRequest(rawURL string, customHeaders map[string]string) (int, map[strin
 		if key == "content-encoding" && strings.Contains(val, "gzip") {
 			isGzip = true
 		}
+		if key == "connection" && strings.Contains(strings.ToLower(val), "close") {
+			keepAlive = false
+		}
 	}
 
-	// 304 → keep cache
 	if statusCode == 304 {
+		if keepAlive {
+			releaseConn(u.Host, u.Scheme, conn)
+		} else {
+			conn.Close()
+		}
 		return statusCode, headers, "", "", nil
 	}
 
@@ -190,12 +227,17 @@ func makeRequest(rawURL string, customHeaders map[string]string) (int, map[strin
 	bodyBytes, _ := io.ReadAll(bodyReader)
 	body := string(bodyBytes)
 
-	// Store in cache
 	httpCache[rawURL] = &CacheEntry{
 		Body:         body,
 		ETag:         etag,
 		LastModified: lastModified,
 		Headers:      headers,
+	}
+
+	if keepAlive {
+		releaseConn(u.Host, u.Scheme, conn)
+	} else {
+		conn.Close()
 	}
 
 	return statusCode, headers, body, location, nil
